@@ -1,0 +1,281 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  GUEST
+  CUSTOMER
+  AGENT
+  ADMIN
+}
+
+enum PostStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum InsuranceCategory {
+  AUTO
+  HEALTH
+  LIFE
+  PROPERTY
+  BUSINESS
+  TRAVEL
+  DISABILITY
+  LIABILITY
+  MARINE
+  CYBER
+  OTHER
+}
+
+enum TokenTransactionType {
+  PURCHASE
+  POST_CREATION
+  FILE_UPLOAD
+  REFUND
+  ADMIN_ADJUSTMENT
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  FILE
+}
+
+model User {
+  id            String   @id @default(cuid())
+  email         String   @unique
+  password      String
+  name          String
+  avatar        String?
+  role          UserRole @default(CUSTOMER)
+  tokenBalance  Int      @default(0)
+  isVerified    Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Agent specific fields
+  agentPackageId String?
+  agentPackage   AgentPackage? @relation(fields: [agentPackageId], references: [id])
+  packageExpiresAt DateTime?
+
+  // Customer-Agent relationship
+  agentId       String?
+  agent         User?   @relation("AgentCustomers", fields: [agentId], references: [id])
+  customers     User[]  @relation("AgentCustomers")
+
+  // Posts
+  posts         Post[]
+  postLikes     PostLike[]
+  postComments  PostComment[]
+
+  // Messages
+  sentMessages     Message[] @relation("MessageSender")
+  receivedMessages Message[] @relation("MessageReceiver")
+  chatParticipants ChatParticipant[]
+
+  // Token transactions
+  tokenTransactions TokenTransaction[]
+  tokenRequests     TokenRequest[] @relation("UserTokenRequests")
+
+  // Admin actions
+  reviewedPosts Post[] @relation("PostReviewer")
+
+  // Notifications
+  notifications Notification[]
+
+  @@map("users")
+}
+
+model AgentPackage {
+  id            String @id @default(cuid())
+  name          String
+  description   String?
+  monthlyTokens Int
+  price         Float
+  features      String[]
+  isActive      Boolean @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  users User[]
+
+  @@map("agent_packages")
+}
+
+model Post {
+  id              String            @id @default(cuid())
+  title           String
+  content         String
+  image           String?
+  category        InsuranceCategory
+  status          PostStatus        @default(PENDING)
+  tokenCost       Int
+  likes           Int               @default(0)
+  comments        Int               @default(0)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  // Author
+  authorId        String
+  author          User              @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  // Admin review
+  reviewedById    String?
+  reviewedBy      User?             @relation("PostReviewer", fields: [reviewedById], references: [id])
+  reviewedAt      DateTime?
+  rejectionReason String?
+
+  // Interactions
+  postLikes       PostLike[]
+  postComments    PostComment[]
+
+  @@map("posts")
+}
+
+model PostLike {
+  id     String @id @default(cuid())
+  userId String
+  postId String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, postId])
+  @@map("post_likes")
+}
+
+model PostComment {
+  id        String   @id @default(cuid())
+  content   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  postId String
+  post   Post   @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@map("post_comments")
+}
+
+model Chat {
+  id           String @id @default(cuid())
+  name         String?
+  isGroup      Boolean @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  participants ChatParticipant[]
+  messages     Message[]
+
+  @@map("chats")
+}
+
+model ChatParticipant {
+  id       String @id @default(cuid())
+  chatId   String
+  userId   String
+  joinedAt DateTime @default(now())
+
+  chat Chat @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([chatId, userId])
+  @@map("chat_participants")
+}
+
+model Message {
+  id        String      @id @default(cuid())
+  content   String
+  type      MessageType @default(TEXT)
+  fileUrl   String?
+  fileName  String?
+  fileSize  Int?
+  tokenCost Int?
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  chatId     String
+  chat       Chat   @relation(fields: [chatId], references: [id], onDelete: Cascade)
+
+  senderId   String
+  sender     User   @relation("MessageSender", fields: [senderId], references: [id], onDelete: Cascade)
+
+  receiverId String?
+  receiver   User?  @relation("MessageReceiver", fields: [receiverId], references: [id])
+
+  @@map("messages")
+}
+
+model TokenTransaction {
+  id          String               @id @default(cuid())
+  type        TokenTransactionType
+  amount      Int
+  description String
+  createdAt   DateTime             @default(now())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Related entities
+  postId    String?
+  messageId String?
+
+  @@map("token_transactions")
+}
+
+model TokenRequest {
+  id          String   @id @default(cuid())
+  amount      Int
+  price       Float
+  status      String   @default("pending") // pending, approved, rejected
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  userId String
+  user   User   @relation("UserTokenRequests", fields: [userId], references: [id], onDelete: Cascade)
+
+  // Admin review
+  reviewedById String?
+  reviewedAt   DateTime?
+  rejectionReason String?
+
+  @@map("token_requests")
+}
+
+model SystemSettings {
+  id    String @id @default(cuid())
+  key   String @unique
+  value String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("system_settings")
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  type      String   // like, comment, message, post_approved, post_rejected, tokens
+  title     String
+  message   String
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("notifications")
+}
